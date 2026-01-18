@@ -169,8 +169,11 @@ If you prefer manual deployment:
 **Option B: Load from Azure Blob Storage**
 - Enter the full blob URL in the URL input field
 - Supports both plain and gzip-compressed files (`.ndjson.gz`)
+- Supports SAS token URLs for authentication
 - Example: `https://storageaccount.blob.core.windows.net/logs-container/y=2026/m=01/d=10/h=08/m=00/p=00/part-*.ndjson.gz`
 - Click "Load from URL" or press Enter
+
+**Note on CORS**: The app fetches blobs directly from the browser. Configure Storage Account CORS to allow GET/HEAD from your origin (use `*` for testing) so SAS URLs work reliably.
 
 ### 2. Supported Log Format
 
@@ -348,6 +351,79 @@ Azure Static Web Apps automatically sets up GitHub Actions for CI/CD when deploy
 - **Solution**: Verify SQL syntax
 - Check that column names match your data
 - Remember the table is always named `logs`
+
+### Issue: "Cannot load from Azure Blob Storage URL"
+
+If you encounter issues loading files from Azure Blob Storage, try these steps:
+
+1. **Verify URL is correct**
+   - Check that the URL is accessible in your browser directly
+   - For SAS URLs, ensure they haven't expired
+
+2. **Configure CORS on Storage Account** (Recommended)
+   
+   The most reliable way is to configure CORS on your Azure Storage Account:
+   
+   **Using Azure Portal:**
+   1. Go to your Storage Account in the Azure Portal
+   2. In the left menu, go to "Blob service" → "CORS"
+   3. Click "Edit" and add the following configuration:
+      ```
+      Allowed origins: *
+      Allowed methods: GET, HEAD
+      Allowed headers: *
+      Exposed headers: *
+      Max age: 86400
+      ```
+   4. Click "Save"
+   
+   **Using Azure CLI:**
+   ```bash
+   az storage cors add \
+     --methods GET HEAD \
+     --origins '*' \
+     --allowed-headers '*' \
+     --exposed-headers '*' \
+     --max-age 86400 \
+     --services b \
+     --account-name <storage-account-name>
+   ```
+   
+   **Using PowerShell:**
+   ```powershell
+   $ctx = New-AzStorageContext -StorageAccountName <storage-account-name> -UseConnectedAccount
+   $CorsRules = @(
+     @{
+       AllowedOrigins = @("*")
+       AllowedMethods = @("Get", "Head")
+       MaxAgeInSeconds = 86400
+       ExposedHeaders = @("*")
+       AllowedHeaders = @("*")
+     }
+   )
+   $ctx | Set-AzStorageCORSRule -CorsRules $CorsRules -ServiceType Blob
+   ```
+
+3. **Use the Proxy Endpoint** (Fallback)
+   
+   The application has a built-in proxy endpoint that automatically handles CORS:
+   - If direct blob URL access fails with CORS errors, the app automatically retries via `/api/proxy`
+   - This requires the API backend to be deployed
+   - The proxy fetches the blob server-side where CORS restrictions don't apply
+
+4. **Check Browser Console**
+   
+   To debug further:
+   - Open browser DevTools (F12)
+   - Go to the Network tab
+   - Try loading the file again
+   - Check for failed requests and their status codes
+   - Look for CORS-related errors in the Console tab
+
+### Issue: "Gzip decompression failed"
+- **Solution**: Ensure the file is actually gzip-compressed if it has `.gz` extension
+- Modern browsers support the `DecompressionStream` API
+- If using an older browser, try uploading the decompressed `.ndjson` file instead
 
 ### Issue: "azd up fails"
 - **Solution**: Ensure you have Azure CLI and azd installed

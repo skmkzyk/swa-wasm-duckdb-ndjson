@@ -170,6 +170,8 @@ azd up
 - 例: `https://storageaccount.blob.core.windows.net/logs-container/y=2026/m=01/d=10/h=08/m=00/p=00/part-*.ndjson.gz`
 - 「Load from URL」をクリックまたは Enter キーを押す
 
+**CORS について**: ブラウザから直接 Blob を取得します。Storage Account の CORS でアクセス元（テスト用途は `*` でも可）に対して GET/HEAD を許可してください。
+
 ### 2. サポートされているログフォーマット
 
 ビューアは、各行が有効な JSON オブジェクトである NDJSON フォーマットを想定しています:

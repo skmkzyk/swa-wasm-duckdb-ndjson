@@ -364,7 +364,7 @@
                     <button class="btn btn-primary" id="loadUrlBtn">Load from URL</button>
                 </div>
                 <div class="url-help">
-                    Example: https://stliqfuncrmkp5lvt.blob.core.windows.net/logs-sample-net/y=2026/m=01/d=10/h=08/m=00/p=00/part-o000000100-o000000999.ndjson.gz
+                    Supports SAS URLs and direct blob URLs. Example: https://storageaccount.blob.core.windows.net/logs-sample-net/y%3D2026/m%3D01/d%3D10/h%3D08/m%3D00/p%3D00/part-o000000100-o000000999.ndjson.gz
                 </div>
             </div>
             
@@ -565,69 +565,92 @@
             try {
                 showMessage('Fetching file from blob storage...', 'loading');
                 
-                const response = await fetch(url);
+                const response = await fetch(url, {
+                    mode: 'cors',
+                    credentials: 'omit'
+                });
+                
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
                 }
                 
+                await processBlobResponse(response, url);
+            } catch (error) {
+                showMessage(`Error loading from URL: ${error.message}`, 'error');
+                console.error('Fetch error:', error);
+            }
+        }
+        
+        // Process blob response (common for both direct and proxy)
+        async function processBlobResponse(response, url) {
+            try {
+                const contentType = response.headers.get('content-type') || '';
+                if (contentType.includes('text/html')) {
+                    const html = await response.text();
+                    throw new Error('Blob download returned HTML (check SAS/CORS/permissions)');
+                }
+
                 const blob = await response.blob();
+                const contentEncoding = (response.headers.get('content-encoding') || '').toLowerCase();
+                const isGzipByHeader = contentEncoding.includes('gzip');
+                const isGzipByUrl = url.toLowerCase().endsWith('.gz');
+                const buffer = await blob.arrayBuffer();
+                const bytes = new Uint8Array(buffer);
+                const isGzipByMagic = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b; // GZIP magic number
+
                 let text;
-                
-                // Check if file is gzipped
-                if (url.endsWith('.gz')) {
+                if (isGzipByHeader || isGzipByUrl || isGzipByMagic) {
                     showMessage('Decompressing gzip file...', 'loading');
-                    
-                    // Use DecompressionStream API (available in modern browsers)
                     const ds = new DecompressionStream('gzip');
-                    const decompressedStream = blob.stream().pipeThrough(ds);
+                    const decompressedStream = new Blob([buffer]).stream().pipeThrough(ds);
                     const decompressedBlob = await new Response(decompressedStream).blob();
                     text = await decompressedBlob.text();
                 } else {
-                    text = await blob.text();
+                    text = await new Response(buffer).text();
                 }
                 
                 const lines = text.trim().split('\n').filter(line => line.trim());
-                
                 if (lines.length === 0) {
                     throw new Error('File is empty');
                 }
                 
                 showMessage(`Parsing ${lines.length} log entries...`, 'loading');
                 
-                // Parse all lines as JSON and expand message field
-                const records = lines.map((line, idx) => {
+                const records = [];
+                let firstFailure = null;
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
                     try {
                         const record = JSON.parse(line);
-                        return expandMessage(record);
+                        records.push(expandMessage(record));
                     } catch (e) {
-                        console.warn(`Failed to parse line ${idx + 1}:`, line);
-                        return null;
+                        if (!firstFailure) {
+                            const message = e instanceof Error ? e.message : String(e);
+                            firstFailure = `line ${i + 1}: ${message}`;
+                        }
                     }
-                }).filter(r => r !== null);
+                }
                 
                 if (records.length === 0) {
-                    throw new Error('No valid JSON records found');
+                    const detail = firstFailure ? ` First failure at ${firstFailure}.` : '';
+                    throw new Error(`No valid JSON records found.${detail}`);
                 }
                 
                 showMessage(`Creating table with ${records.length} records...`, 'loading');
                 
-                // Drop existing table if it exists
                 try {
                     await conn.query('DROP TABLE IF EXISTS logs');
                 } catch (e) {
                     // Ignore error if table doesn't exist
                 }
                 
-                // Insert data into DuckDB using parsed records
                 const jsonData = JSON.stringify(records);
                 await db.registerFileText('data.json', jsonData);
                 await conn.insertJSONFromPath('data.json', { name: 'logs' });
                 
-                // Get statistics
                 const countResult = await conn.query('SELECT COUNT(*) as count FROM logs');
                 const count = countResult.toArray()[0].count;
                 
-                // Show statistics
                 showStats(records.length, records[0]);
                 
                 dataLoaded = true;
@@ -635,7 +658,6 @@
                 
                 showMessage(`Successfully loaded ${count} log entries from blob storage!`, 'success');
                 
-                // Auto-execute the default query
                 setTimeout(() => executeQuery(), 500);
                 
             } catch (error) {
@@ -789,6 +811,7 @@
         // Load from URL button
         document.getElementById('loadUrlBtn').addEventListener('click', () => {
             const url = document.getElementById('blobUrl').value.trim();
+            console.log('Load URL button clicked, URL:', url);
             if (url) {
                 loadFromBlobUrl(url);
             } else {
