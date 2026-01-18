@@ -263,7 +263,7 @@
             border-bottom: 1px solid #e0e0e0;
         }
         
-        tr:hover {
+        tbody tr:hover {
             background: #f8f9fa;
         }
         
@@ -378,17 +378,17 @@
             
             <div class="example-queries">
                 <h3>📝 Example Queries:</h3>
-                <div class="example-query" data-query="SELECT * FROM logs ORDER BY time_utc DESC LIMIT 100">
+                <div class="example-query" data-query="SELECT time_utc, fqdn, method, path, ts, &quot;X-Azure-Clientip&quot; FROM logs ORDER BY time_utc DESC LIMIT 100">
                     <code>Get latest 100 log entries</code>
                 </div>
                 <div class="example-query" data-query="SELECT fqdn, COUNT(*) as count FROM logs GROUP BY fqdn ORDER BY count DESC">
                     <code>Count logs by FQDN</code>
                 </div>
-                <div class="example-query" data-query="SELECT record.level, COUNT(*) as count FROM logs WHERE record.level IS NOT NULL GROUP BY record.level ORDER BY count DESC">
-                    <code>Count logs by level</code>
+                <div class="example-query" data-query="SELECT method, COUNT(*) as count FROM logs WHERE method IS NOT NULL GROUP BY method ORDER BY count DESC">
+                    <code>Count logs by HTTP method</code>
                 </div>
-                <div class="example-query" data-query="SELECT * FROM logs WHERE record.level = 'Error' ORDER BY time_utc DESC LIMIT 50">
-                    <code>Get Error level logs</code>
+                <div class="example-query" data-query="SELECT path, COUNT(*) as count FROM logs WHERE path IS NOT NULL GROUP BY path ORDER BY count DESC">
+                    <code>Count logs by request path</code>
                 </div>
                 <div class="example-query" data-query="SELECT DATE_TRUNC('hour', CAST(time_utc AS TIMESTAMP)) as hour, COUNT(*) as count FROM logs GROUP BY hour ORDER BY hour DESC">
                     <code>Log count by hour</code>
@@ -436,6 +436,52 @@
             }
         }
 
+        // Expand and flatten message field
+        function expandMessage(record) {
+            const expanded = { ...record };
+            
+            // Remove fields that users don't care about
+            delete expanded.partition_id;
+            delete expanded.offset;
+            delete expanded.sequence_number;
+            
+            // Parse message field if it contains embedded JSON
+            if (expanded.message && typeof expanded.message === 'string') {
+                try {
+                    // Extract JSON from message (format: "[timestamp] LEVEL in app: {...}")
+                    const jsonStart = expanded.message.indexOf('{');
+                    if (jsonStart !== -1) {
+                        const jsonStr = expanded.message.substring(jsonStart);
+                        const messageData = JSON.parse(jsonStr);
+                        
+                        // Flatten the message data into the record
+                        if (messageData && typeof messageData === 'object') {
+                            Object.keys(messageData).forEach(key => {
+                                if (key === 'headers' && typeof messageData[key] === 'object') {
+                                    // Extract important headers
+                                    const headers = messageData[key];
+                                    if (headers['X-Azure-Clientip']) {
+                                        expanded['X-Azure-Clientip'] = headers['X-Azure-Clientip'];
+                                    }
+                                    // Convert remaining headers to string representation
+                                    expanded[key] = JSON.stringify(headers);
+                                } else if (typeof messageData[key] !== 'object') {
+                                    expanded[key] = messageData[key];
+                                }
+                            });
+                        }
+                        // Remove the original message field after expansion
+                        delete expanded.message;
+                    }
+                } catch (e) {
+                    // If parsing fails, keep the original message field
+                    console.warn('Failed to parse embedded JSON in message:', e);
+                }
+            }
+            
+            return expanded;
+        }
+
         // Load NDJSON file
         async function loadNDJSON(file) {
             try {
@@ -450,10 +496,11 @@
                 
                 showMessage(`Parsing ${lines.length} log entries...`, 'loading');
                 
-                // Parse all lines as JSON
+                // Parse all lines as JSON and expand message field
                 const records = lines.map((line, idx) => {
                     try {
-                        return JSON.parse(line);
+                        const record = JSON.parse(line);
+                        return expandMessage(record);
                     } catch (e) {
                         console.warn(`Failed to parse line ${idx + 1}:`, line);
                         return null;
@@ -473,12 +520,10 @@
                     // Ignore error if table doesn't exist
                 }
                 
-                // Insert data into DuckDB
-                await db.registerFileText('data.ndjson', text);
-                await conn.query(`
-                    CREATE TABLE logs AS 
-                    SELECT * FROM read_json_auto('data.ndjson', format='newline_delimited')
-                `);
+                // Insert data into DuckDB using parsed records
+                const jsonData = JSON.stringify(records);
+                await db.registerFileText('data.json', jsonData);
+                await conn.insertJSONFromPath('data.json', { name: 'logs' });
                 
                 // Get statistics
                 const countResult = await conn.query('SELECT COUNT(*) as count FROM logs');
@@ -535,10 +580,11 @@
                 
                 showMessage(`Parsing ${lines.length} log entries...`, 'loading');
                 
-                // Parse all lines as JSON
+                // Parse all lines as JSON and expand message field
                 const records = lines.map((line, idx) => {
                     try {
-                        return JSON.parse(line);
+                        const record = JSON.parse(line);
+                        return expandMessage(record);
                     } catch (e) {
                         console.warn(`Failed to parse line ${idx + 1}:`, line);
                         return null;
@@ -558,12 +604,10 @@
                     // Ignore error if table doesn't exist
                 }
                 
-                // Insert data into DuckDB
-                await db.registerFileText('data.ndjson', text);
-                await conn.query(`
-                    CREATE TABLE logs AS 
-                    SELECT * FROM read_json_auto('data.ndjson', format='newline_delimited')
-                `);
+                // Insert data into DuckDB using parsed records
+                const jsonData = JSON.stringify(records);
+                await db.registerFileText('data.json', jsonData);
+                await conn.insertJSONFromPath('data.json', { name: 'logs' });
                 
                 // Get statistics
                 const countResult = await conn.query('SELECT COUNT(*) as count FROM logs');
