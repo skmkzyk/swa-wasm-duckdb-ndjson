@@ -487,7 +487,21 @@
             try {
                 showMessage('Loading file...', 'loading');
                 
-                const text = await file.text();
+                let text;
+                
+                // Check if file is gzipped
+                if (file.name.endsWith('.gz')) {
+                    showMessage('Decompressing gzip file...', 'loading');
+                    
+                    // Use DecompressionStream API (available in modern browsers)
+                    const ds = new DecompressionStream('gzip');
+                    const decompressedStream = file.stream().pipeThrough(ds);
+                    const decompressedBlob = await new Response(decompressedStream).blob();
+                    text = await decompressedBlob.text();
+                } else {
+                    text = await file.text();
+                }
+                
                 const lines = text.trim().split('\n').filter(line => line.trim());
                 
                 if (lines.length === 0) {
