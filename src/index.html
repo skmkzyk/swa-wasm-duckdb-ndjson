@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NDJSON Log Viewer - DuckDB WASM</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+        
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .controls {
+            padding: 30px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .upload-section {
+            margin-bottom: 20px;
+        }
+        
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            background: white;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .upload-area:hover {
+            border-color: #764ba2;
+            background: #f0f4ff;
+        }
+        
+        .upload-area.dragover {
+            border-color: #764ba2;
+            background: #f0f4ff;
+            transform: scale(1.02);
+        }
+        
+        .upload-icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+        }
+        
+        .upload-text {
+            font-size: 1.2em;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .upload-subtext {
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        #fileInput {
+            display: none;
+        }
+        
+        .url-section {
+            margin-top: 20px;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .url-label {
+            font-weight: 600;
+            margin-bottom: 10px;
+            display: block;
+            color: #333;
+        }
+        
+        .url-input-wrapper {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+        }
+        
+        #blobUrl {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            transition: border-color 0.3s ease;
+        }
+        
+        #blobUrl:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .url-help {
+            margin-top: 8px;
+            color: #666;
+            font-size: 0.85em;
+        }
+        
+        .query-section {
+            margin-top: 20px;
+        }
+        
+        .query-label {
+            font-weight: 600;
+            margin-bottom: 10px;
+            display: block;
+            color: #333;
+        }
+        
+        .query-input-wrapper {
+            display: flex;
+            gap: 10px;
+        }
+        
+        #sqlQuery {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+        
+        #sqlQuery:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .stat-label {
+            font-size: 0.9em;
+            opacity: 0.9;
+            margin-bottom: 5px;
+        }
+        
+        .stat-value {
+            font-size: 2em;
+            font-weight: 700;
+        }
+        
+        .results-section {
+            margin-top: 20px;
+        }
+        
+        .table-wrapper {
+            overflow-x: auto;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+        }
+        
+        thead {
+            position: sticky;
+            top: 0;
+            background: #667eea;
+            color: white;
+            z-index: 10;
+        }
+        
+        th {
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid #764ba2;
+        }
+        
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 4px solid #c33;
+            margin-top: 20px;
+        }
+        
+        .success {
+            background: #efe;
+            color: #3c3;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 4px solid #3c3;
+            margin-top: 20px;
+        }
+        
+        .example-queries {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+        
+        .example-queries h3 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .example-query {
+            background: white;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border-left: 3px solid #667eea;
+        }
+        
+        .example-query:hover {
+            background: #f0f4ff;
+            transform: translateX(5px);
+        }
+        
+        .example-query code {
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🦆 NDJSON Log Viewer</h1>
+            <p>Powered by DuckDB WASM - Fast analytical queries on your log files</p>
+        </div>
+        
+        <div class="controls">
+            <div class="upload-section">
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">📁</div>
+                    <div class="upload-text">Drop your NDJSON file here or click to browse</div>
+                    <div class="upload-subtext">Supports .ndjson, .jsonl, .gz files from App Service console logs</div>
+                </div>
+                <input type="file" id="fileInput" accept=".ndjson,.jsonl,.json,.gz">
+            </div>
+            
+            <div class="url-section">
+                <label class="url-label">Or load from Azure Blob Storage URL:</label>
+                <div class="url-input-wrapper">
+                    <input type="text" id="blobUrl" placeholder="https://storageaccount.blob.core.windows.net/container/path/file.ndjson.gz">
+                    <button class="btn btn-primary" id="loadUrlBtn">Load from URL</button>
+                </div>
+                <div class="url-help">
+                    Example: https://stliqfuncrmkp5lvt.blob.core.windows.net/logs-sample-net/y=2026/m=01/d=10/h=08/m=00/p=00/part-o000000100-o000000999.ndjson.gz
+                </div>
+            </div>
+            
+            <div class="query-section">
+                <label class="query-label">SQL Query:</label>
+                <div class="query-input-wrapper">
+                    <textarea id="sqlQuery" rows="3" placeholder="SELECT * FROM logs ORDER BY time_utc DESC LIMIT 100">SELECT * FROM logs ORDER BY time_utc DESC LIMIT 100</textarea>
+                    <button class="btn btn-primary" id="executeBtn" disabled>Execute Query</button>
+                </div>
+            </div>
+            
+            <div class="example-queries">
+                <h3>📝 Example Queries:</h3>
+                <div class="example-query" data-query="SELECT * FROM logs ORDER BY time_utc DESC LIMIT 100">
+                    <code>Get latest 100 log entries</code>
+                </div>
+                <div class="example-query" data-query="SELECT fqdn, COUNT(*) as count FROM logs GROUP BY fqdn ORDER BY count DESC">
+                    <code>Count logs by FQDN</code>
+                </div>
+                <div class="example-query" data-query="SELECT record.level, COUNT(*) as count FROM logs WHERE record.level IS NOT NULL GROUP BY record.level ORDER BY count DESC">
+                    <code>Count logs by level</code>
+                </div>
+                <div class="example-query" data-query="SELECT * FROM logs WHERE record.level = 'Error' ORDER BY time_utc DESC LIMIT 50">
+                    <code>Get Error level logs</code>
+                </div>
+                <div class="example-query" data-query="SELECT DATE_TRUNC('hour', CAST(time_utc AS TIMESTAMP)) as hour, COUNT(*) as count FROM logs GROUP BY hour ORDER BY hour DESC">
+                    <code>Log count by hour</code>
+                </div>
+            </div>
+        </div>
+        
+        <div class="content">
+            <div class="stats" id="stats" style="display: none;"></div>
+            <div id="message"></div>
+            <div class="results-section" id="results"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.28.0/+esm';
+
+        let db = null;
+        let conn = null;
+        let dataLoaded = false;
+
+        // Initialize DuckDB
+        async function initDuckDB() {
+            try {
+                showMessage('Initializing DuckDB WASM...', 'loading');
+                
+                const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
+                const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
+                const worker_url = URL.createObjectURL(
+                    new Blob([`importScripts("${bundle.mainWorker}");`], {type: 'text/javascript'})
+                );
+                const worker = new Worker(worker_url);
+                const logger = new duckdb.ConsoleLogger();
+                db = new duckdb.AsyncDuckDB(logger, worker);
+                await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+                URL.revokeObjectURL(worker_url);
+                
+                conn = await db.connect();
+                
+                showMessage('DuckDB WASM initialized successfully!', 'success');
+                setTimeout(() => hideMessage(), 2000);
+            } catch (error) {
+                showMessage(`Error initializing DuckDB: ${error.message}`, 'error');
+                console.error('DuckDB initialization error:', error);
+            }
+        }
+
+        // Load NDJSON file
+        async function loadNDJSON(file) {
+            try {
+                showMessage('Loading file...', 'loading');
+                
+                const text = await file.text();
+                const lines = text.trim().split('\n').filter(line => line.trim());
+                
+                if (lines.length === 0) {
+                    throw new Error('File is empty');
+                }
+                
+                showMessage(`Parsing ${lines.length} log entries...`, 'loading');
+                
+                // Parse all lines as JSON
+                const records = lines.map((line, idx) => {
+                    try {
+                        return JSON.parse(line);
+                    } catch (e) {
+                        console.warn(`Failed to parse line ${idx + 1}:`, line);
+                        return null;
+                    }
+                }).filter(r => r !== null);
+                
+                if (records.length === 0) {
+                    throw new Error('No valid JSON records found');
+                }
+                
+                showMessage(`Creating table with ${records.length} records...`, 'loading');
+                
+                // Drop existing table if it exists
+                try {
+                    await conn.query('DROP TABLE IF EXISTS logs');
+                } catch (e) {
+                    // Ignore error if table doesn't exist
+                }
+                
+                // Insert data into DuckDB
+                await db.registerFileText('data.ndjson', text);
+                await conn.query(`
+                    CREATE TABLE logs AS 
+                    SELECT * FROM read_json_auto('data.ndjson', format='newline_delimited')
+                `);
+                
+                // Get statistics
+                const countResult = await conn.query('SELECT COUNT(*) as count FROM logs');
+                const count = countResult.toArray()[0].count;
+                
+                // Show statistics
+                showStats(records.length, records[0]);
+                
+                dataLoaded = true;
+                document.getElementById('executeBtn').disabled = false;
+                
+                showMessage(`Successfully loaded ${count} log entries!`, 'success');
+                
+                // Auto-execute the default query
+                setTimeout(() => executeQuery(), 500);
+                
+            } catch (error) {
+                showMessage(`Error loading file: ${error.message}`, 'error');
+                console.error('Load error:', error);
+            }
+        }
+
+        // Load NDJSON from Azure Blob Storage URL
+        async function loadFromBlobUrl(url) {
+            try {
+                showMessage('Fetching file from blob storage...', 'loading');
+                
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const blob = await response.blob();
+                let text;
+                
+                // Check if file is gzipped
+                if (url.endsWith('.gz')) {
+                    showMessage('Decompressing gzip file...', 'loading');
+                    
+                    // Use DecompressionStream API (available in modern browsers)
+                    const ds = new DecompressionStream('gzip');
+                    const decompressedStream = blob.stream().pipeThrough(ds);
+                    const decompressedBlob = await new Response(decompressedStream).blob();
+                    text = await decompressedBlob.text();
+                } else {
+                    text = await blob.text();
+                }
+                
+                const lines = text.trim().split('\n').filter(line => line.trim());
+                
+                if (lines.length === 0) {
+                    throw new Error('File is empty');
+                }
+                
+                showMessage(`Parsing ${lines.length} log entries...`, 'loading');
+                
+                // Parse all lines as JSON
+                const records = lines.map((line, idx) => {
+                    try {
+                        return JSON.parse(line);
+                    } catch (e) {
+                        console.warn(`Failed to parse line ${idx + 1}:`, line);
+                        return null;
+                    }
+                }).filter(r => r !== null);
+                
+                if (records.length === 0) {
+                    throw new Error('No valid JSON records found');
+                }
+                
+                showMessage(`Creating table with ${records.length} records...`, 'loading');
+                
+                // Drop existing table if it exists
+                try {
+                    await conn.query('DROP TABLE IF EXISTS logs');
+                } catch (e) {
+                    // Ignore error if table doesn't exist
+                }
+                
+                // Insert data into DuckDB
+                await db.registerFileText('data.ndjson', text);
+                await conn.query(`
+                    CREATE TABLE logs AS 
+                    SELECT * FROM read_json_auto('data.ndjson', format='newline_delimited')
+                `);
+                
+                // Get statistics
+                const countResult = await conn.query('SELECT COUNT(*) as count FROM logs');
+                const count = countResult.toArray()[0].count;
+                
+                // Show statistics
+                showStats(records.length, records[0]);
+                
+                dataLoaded = true;
+                document.getElementById('executeBtn').disabled = false;
+                
+                showMessage(`Successfully loaded ${count} log entries from blob storage!`, 'success');
+                
+                // Auto-execute the default query
+                setTimeout(() => executeQuery(), 500);
+                
+            } catch (error) {
+                showMessage(`Error loading from URL: ${error.message}`, 'error');
+                console.error('Blob load error:', error);
+            }
+        }
+
+        // Execute SQL query
+        async function executeQuery() {
+            if (!dataLoaded) {
+                showMessage('Please load a file first', 'error');
+                return;
+            }
+            
+            const query = document.getElementById('sqlQuery').value.trim();
+            if (!query) {
+                showMessage('Please enter a query', 'error');
+                return;
+            }
+            
+            try {
+                showMessage('Executing query...', 'loading');
+                
+                const result = await conn.query(query);
+                const data = result.toArray();
+                
+                displayResults(data);
+                showMessage(`Query executed successfully! (${data.length} rows)`, 'success');
+                setTimeout(() => hideMessage(), 3000);
+                
+            } catch (error) {
+                showMessage(`Query error: ${error.message}`, 'error');
+                console.error('Query error:', error);
+            }
+        }
+
+        // Display query results
+        function displayResults(data) {
+            const resultsDiv = document.getElementById('results');
+            
+            if (data.length === 0) {
+                resultsDiv.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">No results found</p>';
+                return;
+            }
+            
+            const columns = Object.keys(data[0]);
+            
+            let html = '<div class="table-wrapper"><table>';
+            html += '<thead><tr>';
+            columns.forEach(col => {
+                html += `<th>${escapeHtml(col)}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+            
+            data.forEach(row => {
+                html += '<tr>';
+                columns.forEach(col => {
+                    const value = row[col];
+                    const displayValue = value === null || value === undefined ? '' : String(value);
+                    html += `<td>${escapeHtml(displayValue)}</td>`;
+                });
+                html += '</tr>';
+            });
+            
+            html += '</tbody></table></div>';
+            resultsDiv.innerHTML = html;
+        }
+
+        // Show statistics
+        function showStats(count, sampleRecord) {
+            const statsDiv = document.getElementById('stats');
+            const keys = Object.keys(sampleRecord);
+            
+            let html = `
+                <div class="stat-card">
+                    <div class="stat-label">Total Records</div>
+                    <div class="stat-value">${count.toLocaleString()}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Fields</div>
+                    <div class="stat-value">${keys.length}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Available Fields</div>
+                    <div class="stat-value" style="font-size: 0.9em;">${keys.slice(0, 5).join(', ')}${keys.length > 5 ? '...' : ''}</div>
+                </div>
+            `;
+            
+            statsDiv.innerHTML = html;
+            statsDiv.style.display = 'grid';
+        }
+
+        // UI helper functions
+        function showMessage(text, type) {
+            const messageDiv = document.getElementById('message');
+            let html = '';
+            
+            if (type === 'loading') {
+                html = `<div class="loading"><div class="spinner"></div>${text}</div>`;
+            } else if (type === 'error') {
+                html = `<div class="error">${text}</div>`;
+            } else if (type === 'success') {
+                html = `<div class="success">${text}</div>`;
+            }
+            
+            messageDiv.innerHTML = html;
+        }
+
+        function hideMessage() {
+            document.getElementById('message').innerHTML = '';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Event listeners
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        
+        uploadArea.addEventListener('click', () => fileInput.click());
+        
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) {
+                loadNDJSON(file);
+            }
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                loadNDJSON(file);
+            }
+        });
+        
+        // Load from URL button
+        document.getElementById('loadUrlBtn').addEventListener('click', () => {
+            const url = document.getElementById('blobUrl').value.trim();
+            if (url) {
+                loadFromBlobUrl(url);
+            } else {
+                showMessage('Please enter a valid blob URL', 'error');
+            }
+        });
+        
+        // Allow Enter key in URL input
+        document.getElementById('blobUrl').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const url = document.getElementById('blobUrl').value.trim();
+                if (url) {
+                    loadFromBlobUrl(url);
+                }
+            }
+        });
+        
+        document.getElementById('executeBtn').addEventListener('click', executeQuery);
+        
+        document.getElementById('sqlQuery').addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'Enter') {
+                executeQuery();
+            }
+        });
+        
+        // Example query click handlers
+        document.querySelectorAll('.example-query').forEach(el => {
+            el.addEventListener('click', () => {
+                const query = el.getAttribute('data-query');
+                document.getElementById('sqlQuery').value = query;
+                if (dataLoaded) {
+                    executeQuery();
+                }
+            });
+        });
+
+        // Initialize on page load
+        initDuckDB();
+    </script>
+</body>
+</html>
