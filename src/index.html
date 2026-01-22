@@ -364,7 +364,7 @@
                     <button class="btn btn-primary" id="loadUrlBtn">Load from URL</button>
                 </div>
                 <div class="url-help">
-                    Supports SAS URLs and direct blob URLs. Example: https://storageaccount.blob.core.windows.net/logs-sample-net/y%3D2026/m%3D01/d%3D10/h%3D08/m%3D00/p%3D00/part-o000000100-o000000999.ndjson.gz
+                    Supports SAS URLs, direct blob URLs, and wildcards: e.g. https://account.blob.core.windows.net/logs-xxxxx-net/y=2026/m=01/d=20/h=09/m=00/*.ndjson.gz?sv=...&ss=...&srt=...&sp=rl&se=...
                 </div>
             </div>
             
@@ -560,24 +560,165 @@
             }
         }
 
-        // Load NDJSON from Azure Blob Storage URL
+        // Load NDJSON from Azure Blob Storage URL (supports single file or wildcard)
         async function loadFromBlobUrl(url) {
             try {
-                showMessage('Fetching file from blob storage...', 'loading');
-                
-                const response = await fetch(url, {
-                    mode: 'cors',
-                    credentials: 'omit'
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
+                const hasWildcard = url.includes('*');
+                if (hasWildcard) {
+                    await loadFromBlobWildcardUrl(url);
+                    return;
                 }
-                
+                showMessage('Fetching file from blob storage...', 'loading');
+                const response = await fetch(url, { mode: 'cors', credentials: 'omit' });
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
                 await processBlobResponse(response, url);
             } catch (error) {
                 showMessage(`Error loading from URL: ${error.message}`, 'error');
                 console.error('Fetch error:', error);
+            }
+        }
+
+        // Parse a wildcard Azure Blob URL into components for listing
+        function parseWildcardBlobUrl(inputUrl) {
+            try {
+                // Split query manually so we can keep wildcards in path
+                const qIndex = inputUrl.indexOf('?');
+                const base = qIndex >= 0 ? inputUrl.substring(0, qIndex) : inputUrl;
+                const sas = qIndex >= 0 ? inputUrl.substring(qIndex + 1) : '';
+                const u = new URL(base);
+                // pathname is URL-decoded by the URL API, so preserve it as-is for list operations
+                const pathname = u.pathname.startsWith('/') ? u.pathname.substring(1) : u.pathname;
+                const pathParts = pathname.split('/');
+                if (pathParts.length === 0) throw new Error('Invalid URL path');
+                const container = pathParts.shift();
+                const restPath = pathParts.join('/');
+                const starIndex = restPath.indexOf('*');
+                if (starIndex < 0) throw new Error('No wildcard found in path');
+                // Prefix is everything up to the first wildcard, trimmed to directory boundary
+                const uptoStar = restPath.substring(0, starIndex);
+                const lastSlash = uptoStar.lastIndexOf('/');
+                const prefix = lastSlash >= 0 ? uptoStar.substring(0, lastSlash + 1) : '';
+                const patternPart = restPath.substring(prefix.length);
+                // Build container URL base (use original pathname to preserve encoding)
+                const encodedPath = u.pathname.startsWith('/') ? u.pathname.substring(1) : u.pathname;
+                const originalContainer = encodedPath.split('/')[0];
+                const containerUrl = `${u.origin}/${originalContainer}`;
+                return { containerUrl, prefix, patternPart, sas };
+            } catch (e) {
+                throw new Error('Failed to parse wildcard URL: ' + (e instanceof Error ? e.message : String(e)));
+            }
+        }
+
+        // Convert glob pattern to RegExp
+        function globToRegExp(glob) {
+            const esc = s => s.replace(/[.+^${}()|\[\]\\]/g, '\\$&');
+            let re = '';
+            for (let i = 0; i < glob.length; i++) {
+                const ch = glob[i];
+                if (ch === '*') re += '.*';
+                else if (ch === '?') re += '.';
+                else re += esc(ch);
+            }
+            return new RegExp(`^${re}$`);
+        }
+
+        // List blobs by prefix using Azure Blob List API (XML)
+        async function listBlobs(containerUrl, prefix, sas) {
+            const results = [];
+            let marker = '';
+            while (true) {
+                // Build list URL: prefix is already encoded (e.g., y%3D2026), don't re-encode
+                let url = `${containerUrl}?restype=container&comp=list&maxresults=5000&prefix=${prefix}`;
+                if (marker) url += `&marker=${encodeURIComponent(marker)}`;
+                if (sas) url += `&${sas}`;
+                const resp = await fetch(url, { mode: 'cors', credentials: 'omit' });
+                if (!resp.ok) {
+                    throw new Error(`List failed: ${resp.status} ${resp.statusText}`);
+                }
+                const xmlText = await resp.text();
+                const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+                const blobs = Array.from(doc.getElementsByTagName('Blob'));
+                for (const b of blobs) {
+                    const nameEl = b.getElementsByTagName('Name')[0];
+                    if (nameEl && nameEl.textContent) results.push(nameEl.textContent);
+                }
+                const nextMarkerEl = doc.getElementsByTagName('NextMarker')[0];
+                const next = nextMarkerEl && nextMarkerEl.textContent ? nextMarkerEl.textContent : '';
+                if (!next) break;
+                marker = next;
+            }
+            return results;
+        }
+
+        // Load from wildcard URL: list, filter, download all, combine
+        async function loadFromBlobWildcardUrl(inputUrl) {
+            const { containerUrl, prefix, patternPart, sas } = parseWildcardBlobUrl(inputUrl);
+            const nameRegex = globToRegExp(patternPart);
+            showMessage('Listing blobs matching wildcard...', 'loading');
+            const names = await listBlobs(containerUrl, prefix, sas);
+            const matched = names.filter(n => nameRegex.test(n.substring(prefix.length)));
+            if (matched.length === 0) {
+                throw new Error('No blobs matched the provided wildcard. Pattern: ' + patternPart + ', Prefix: ' + prefix);
+            }
+            // Build full URLs
+            const urls = matched.map(n => `${containerUrl}/${encodeURI(n)}${sas ? `?${sas}` : ''}`);
+            // Download with limited concurrency
+            const MAX_CONCURRENCY = 4;
+            let index = 0;
+            const allRecords = [];
+            async function worker(id) {
+                while (true) {
+                    const i = index++;
+                    if (i >= urls.length) break;
+                    const u = urls[i];
+                    showMessage(`Downloading ${i + 1}/${urls.length}...`, 'loading');
+                    const resp = await fetch(u, { mode: 'cors', credentials: 'omit' });
+                    if (!resp.ok) throw new Error(`Download failed: ${resp.status} ${resp.statusText}`);
+                    const text = await blobResponseToText(resp, u);
+                    const lines = text.trim().split('\n').filter(line => line.trim());
+                    for (let li = 0; li < lines.length; li++) {
+                        try {
+                            const rec = JSON.parse(lines[li]);
+                            allRecords.push(expandMessage(rec));
+                        } catch {
+                            // skip bad line
+                        }
+                    }
+                }
+            }
+            const workers = Array.from({ length: Math.min(MAX_CONCURRENCY, urls.length) }, (_, i) => worker(i));
+            await Promise.all(workers);
+            if (allRecords.length === 0) throw new Error('No valid JSON records found across blobs');
+            showMessage(`Creating table with ${allRecords.length} records...`, 'loading');
+            try { await conn.query('DROP TABLE IF EXISTS logs'); } catch {}
+            const jsonData = JSON.stringify(allRecords);
+            await db.registerFileText('data.json', jsonData);
+            await conn.insertJSONFromPath('data.json', { name: 'logs' });
+            const countResult = await conn.query('SELECT COUNT(*) as count FROM logs');
+            const count = countResult.toArray()[0].count;
+            showStats(allRecords.length, allRecords[0]);
+            dataLoaded = true;
+            document.getElementById('executeBtn').disabled = false;
+            showMessage(`Loaded ${count} log entries from ${urls.length} blobs`, 'success');
+            setTimeout(() => executeQuery(), 500);
+        }
+
+        // Convert blob HTTP response (possibly gzip) to NDJSON text
+        async function blobResponseToText(response, url) {
+            const blob = await response.blob();
+            const contentEncoding = (response.headers.get('content-encoding') || '').toLowerCase();
+            const isGzipByHeader = contentEncoding.includes('gzip');
+            const isGzipByUrl = url.toLowerCase().endsWith('.gz');
+            const buffer = await blob.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            const isGzipByMagic = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+            if (isGzipByHeader || isGzipByUrl || isGzipByMagic) {
+                const ds = new DecompressionStream('gzip');
+                const decompressedStream = new Blob([buffer]).stream().pipeThrough(ds);
+                const decompressedBlob = await new Response(decompressedStream).blob();
+                return await decompressedBlob.text();
+            } else {
+                return await new Response(buffer).text();
             }
         }
         
