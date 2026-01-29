@@ -54,12 +54,13 @@ This project provides a web-based log viewer that can analyze and visualize NDJS
 .
 ├── azure.yaml                      # Azure Developer CLI configuration
 ├── infra/                          # Infrastructure as Code (Bicep)
-│   ├── main.bicep                 # Main infrastructure template
+│   ├── main.bicep                 # Main infrastructure template (source)
 │   ├── main.parameters.json       # Parameters for deployment
 │   ├── abbreviations.json         # Azure resource naming conventions
 │   └── core/
 │       └── host/
 │           └── staticwebapp.bicep # Static Web App resource definition
+│   # Note: main.json (compiled ARM template) is generated during deployment
 ├── src/                           # Application source code
 │   ├── index.html                 # Main frontend application
 │   └── api/                       # Python Azure Functions API
@@ -173,6 +174,12 @@ If you prefer manual deployment:
 - Example: `https://storageaccount.blob.core.windows.net/logs-container/y=2026/m=01/d=10/h=08/m=00/p=00/part-*.ndjson.gz`
 - Click "Load from URL" or press Enter
 
+**Option C: Select from Available Containers**
+- Choose a container from the dropdown list
+- Click "Load Today's Logs" to automatically load all ndjson.gz files from the current day
+- The backend generates a secure, read-only SAS token using Managed Identity
+- **Setup Required**: See [Container Setup Guide](./CONTAINER_SETUP.md) for configuration instructions
+
 **Note on CORS**: The app fetches blobs directly from the browser. Configure Storage Account CORS to allow GET/HEAD from your origin (use `*` for testing) so SAS URLs work reliably.
 
 ### 2. Supported Log Format
@@ -237,7 +244,7 @@ Results are displayed in a scrollable table with:
 
 ## API Endpoints
 
-The Python API provides optional backend endpoints:
+The Python API provides backend endpoints:
 
 ### GET /api/health
 Health check endpoint to verify API is running.
@@ -262,6 +269,45 @@ Information about the application and example queries.
   "features": [...],
   "supported_formats": [".ndjson", ".jsonl"],
   "example_queries": [...]
+}
+```
+
+### GET /api/containers
+Lists all accessible storage containers using Managed Identity.
+
+**Response:**
+```json
+{
+  "containers": [
+    {
+      "name": "logs-container",
+      "account": "mystorageaccount",
+      "url": "https://mystorageaccount.blob.core.windows.net/logs-container"
+    }
+  ]
+}
+```
+
+**Configuration**: Requires `STORAGE_ACCOUNTS` environment variable. See [Container Setup Guide](./CONTAINER_SETUP.md).
+
+### POST /api/generate-sas
+Generates a read-only SAS token for a specific container.
+
+**Request:**
+```json
+{
+  "container": "logs-container",
+  "account": "mystorageaccount"
+}
+```
+
+**Response:**
+```json
+{
+  "sas_token": "sv=2021-06-08&ss=b&srt=sco&sp=rl&se=...",
+  "container_url": "https://mystorageaccount.blob.core.windows.net/logs-container",
+  "full_url": "https://mystorageaccount.blob.core.windows.net/logs-container?sv=...",
+  "expiry": "2026-01-29T02:00:00"
 }
 ```
 

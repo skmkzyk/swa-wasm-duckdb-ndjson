@@ -18,8 +18,12 @@ resource staticWebApp 'Microsoft.Web/staticSites@2022-09-01' = {
     tier: sku
   }
   properties: {}
+  identity: {
+    type: 'SystemAssigned'
+  }
 }
 
 output name string = staticWebApp.name
 output url string = 'https://${staticWebApp.properties.defaultHostname}'
 output id string = staticWebApp.id
+output principalId string = staticWebApp.identity.principalId

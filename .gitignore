@@ -42,6 +42,11 @@ __blobstorage__/
 __queuestorage__/
 __azurite_db*__.json
 
+# Bicep compiled outputs (ARM templates)
+# Keep .parameters.json but ignore compiled main.json
+infra/main.json
+infra/core/**/*.json
+
 # IDE
 .vscode/
 .idea/
