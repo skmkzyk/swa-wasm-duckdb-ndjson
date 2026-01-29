@@ -308,9 +308,6 @@ Generates a read-only SAS token for a specific container.
   "full_url": "https://mystorageaccount.blob.core.windows.net/logs-container?sv=...",
   "expiry": "2026-01-29T02:00:00"
 }
-  "supported_formats": [".ndjson", ".jsonl"],
-  "example_queries": [...]
-}
 ```
 
 ## Use Cases

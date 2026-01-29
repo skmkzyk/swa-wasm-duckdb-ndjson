@@ -2,7 +2,8 @@ import azure.functions as func
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+import re
+from datetime import datetime, timedelta, timezone
 from azure.storage.blob import BlobServiceClient, BlobSasPermissions, generate_container_sas
 from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 from typing import List, Dict
@@ -58,12 +59,15 @@ def get_credential():
     try:
         # Try Managed Identity first (will work in Azure)
         credential = ManagedIdentityCredential()
-        # Test the credential
+        # Test the credential by attempting to get a token
         credential.get_token("https://storage.azure.com/.default")
+        logging.info("Using Managed Identity for authentication")
         return credential
     except Exception as e:
-        logging.info(f"Managed Identity not available, using DefaultAzureCredential: {e}")
+        logging.warning(f"Managed Identity not available, falling back to DefaultAzureCredential: {e}")
         # Fallback to DefaultAzureCredential (for local development)
+        # This will try various credential types: environment variables, managed identity, 
+        # Azure CLI, Azure PowerShell, etc.
         return DefaultAzureCredential()
 
 def get_storage_accounts_from_env() -> List[str]:
@@ -72,6 +76,31 @@ def get_storage_accounts_from_env() -> List[str]:
     if not accounts_str:
         return []
     return [acc.strip() for acc in accounts_str.split(',') if acc.strip()]
+
+def validate_storage_name(name: str, name_type: str = "name") -> bool:
+    """
+    Validate Azure Storage account or container name.
+    
+    Rules:
+    - Must be 3-63 characters long
+    - Must contain only lowercase letters, numbers, and hyphens
+    - Cannot start or end with a hyphen
+    - Cannot contain consecutive hyphens
+    """
+    if not name or len(name) < 3 or len(name) > 63:
+        return False
+    
+    # Azure storage names must be lowercase alphanumeric with hyphens
+    # Cannot start or end with hyphen, no consecutive hyphens
+    pattern = r'^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+    if not re.match(pattern, name):
+        return False
+    
+    # Check for consecutive hyphens
+    if '--' in name:
+        return False
+    
+    return True
 
 @app.route(route="containers", methods=["GET"])
 def list_containers(req: func.HttpRequest) -> func.HttpResponse:
@@ -152,6 +181,21 @@ def generate_sas(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400
             )
         
+        # Validate storage names to prevent injection attacks
+        if not validate_storage_name(account_name):
+            return func.HttpResponse(
+                json.dumps({"error": "Invalid storage account name format"}),
+                mimetype="application/json",
+                status_code=400
+            )
+        
+        if not validate_storage_name(container_name):
+            return func.HttpResponse(
+                json.dumps({"error": "Invalid container name format"}),
+                mimetype="application/json",
+                status_code=400
+            )
+        
         # Validate that the account is in the allowed list
         allowed_accounts = get_storage_accounts_from_env()
         if allowed_accounts and account_name not in allowed_accounts:
@@ -171,7 +215,7 @@ def generate_sas(req: func.HttpRequest) -> func.HttpResponse:
         )
         
         # Get the user delegation key for generating SAS
-        key_start_time = datetime.utcnow()
+        key_start_time = datetime.now(timezone.utc)
         key_expiry_time = key_start_time + timedelta(hours=2)
         
         user_delegation_key = blob_service_client.get_user_delegation_key(
@@ -185,8 +229,8 @@ def generate_sas(req: func.HttpRequest) -> func.HttpResponse:
             container_name=container_name,
             user_delegation_key=user_delegation_key,
             permission=BlobSasPermissions(read=True, list=True),
-            expiry=datetime.utcnow() + timedelta(hours=1),
-            start=datetime.utcnow() - timedelta(minutes=5)
+            expiry=datetime.now(timezone.utc) + timedelta(hours=1),
+            start=datetime.now(timezone.utc) - timedelta(minutes=5)
         )
         
         container_url = f"{account_url}/{container_name}"
@@ -198,7 +242,7 @@ def generate_sas(req: func.HttpRequest) -> func.HttpResponse:
                 "sas_token": sas_token,
                 "container_url": container_url,
                 "full_url": f"{container_url}?{sas_token}",
-                "expiry": (datetime.utcnow() + timedelta(hours=1)).isoformat()
+                "expiry": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
             }),
             mimetype="application/json",
             status_code=200
