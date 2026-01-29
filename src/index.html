@@ -503,6 +503,7 @@
                 const response = await fetch('/api/containers');
                 
                 // Check if response is JSON before attempting to parse
+                // This handles the case where the API endpoint doesn't exist (404 with HTML)
                 const contentType = response.headers.get('content-type');
                 if (!contentType || !contentType.includes('application/json')) {
                     // API not available or returning non-JSON (e.g., HTML fallback)
@@ -510,11 +511,13 @@
                     throw new Error('API endpoint not available');
                 }
                 
+                // For non-ok responses with JSON, we can still parse to get error details
+                const data = await response.json();
+                
                 if (!response.ok) {
-                    throw new Error(`Failed to load containers: ${response.status}`);
+                    throw new Error(`Failed to load containers: ${response.status} - ${data.error || 'Unknown error'}`);
                 }
                 
-                const data = await response.json();
                 availableContainers = data.containers || [];
                 
                 const select = document.getElementById('containerSelect');
