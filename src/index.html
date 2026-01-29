@@ -511,13 +511,20 @@
                     throw new Error('API endpoint not available');
                 }
                 
-                // For non-ok responses with JSON, we can still parse to get error details
-                const data = await response.json();
-                
+                // For non-ok responses with JSON, try to parse to get error details
                 if (!response.ok) {
-                    throw new Error(`Failed to load containers: ${response.status} - ${data.error || 'Unknown error'}`);
+                    let errorMessage = `Failed to load containers: ${response.status}`;
+                    try {
+                        const errorData = await response.json();
+                        errorMessage = `Failed to load containers: ${response.status} - ${errorData.error || 'Unknown error'}`;
+                    } catch (jsonError) {
+                        // If JSON parsing fails, use the default error message
+                        console.warn('Could not parse error response as JSON:', jsonError);
+                    }
+                    throw new Error(errorMessage);
                 }
                 
+                const data = await response.json();
                 availableContainers = data.containers || [];
                 
                 const select = document.getElementById('containerSelect');
