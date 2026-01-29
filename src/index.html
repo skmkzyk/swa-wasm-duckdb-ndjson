@@ -104,6 +104,53 @@
             border: 1px solid #e0e0e0;
         }
         
+        .container-section {
+            margin-top: 20px;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .container-label {
+            font-weight: 600;
+            margin-bottom: 10px;
+            display: block;
+            color: #333;
+        }
+        
+        .container-input-wrapper {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+        }
+        
+        #containerSelect {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            background: white;
+            transition: border-color 0.3s ease;
+        }
+        
+        #containerSelect:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        #containerSelect:disabled {
+            background: #f5f5f5;
+            cursor: not-allowed;
+        }
+        
+        .container-help {
+            margin-top: 8px;
+            color: #666;
+            font-size: 0.85em;
+        }
+        
         .url-label {
             font-weight: 600;
             margin-bottom: 10px;
@@ -368,6 +415,19 @@
                 </div>
             </div>
             
+            <div class="container-section">
+                <label class="container-label">Or select from available containers:</label>
+                <div class="container-input-wrapper">
+                    <select id="containerSelect" disabled>
+                        <option value="">Loading containers...</option>
+                    </select>
+                    <button class="btn btn-primary" id="loadContainerBtn" disabled>Load Today's Logs</button>
+                </div>
+                <div class="container-help">
+                    Select a container to load all ndjson.gz files for today. The API will generate a secure, read-only SAS token.
+                </div>
+            </div>
+            
             <div class="query-section">
                 <label class="query-label">SQL Query:</label>
                 <div class="query-input-wrapper">
@@ -409,6 +469,7 @@
         let db = null;
         let conn = null;
         let dataLoaded = false;
+        let availableContainers = [];
 
         // Initialize DuckDB
         async function initDuckDB() {
@@ -433,6 +494,111 @@
             } catch (error) {
                 showMessage(`Error initializing DuckDB: ${error.message}`, 'error');
                 console.error('DuckDB initialization error:', error);
+            }
+        }
+
+        // Load available containers from API
+        async function loadContainers() {
+            try {
+                const response = await fetch('/api/containers');
+                if (!response.ok) {
+                    throw new Error(`Failed to load containers: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                availableContainers = data.containers || [];
+                
+                const select = document.getElementById('containerSelect');
+                select.innerHTML = '';
+                
+                if (availableContainers.length === 0) {
+                    select.innerHTML = '<option value="">No containers available</option>';
+                    select.disabled = true;
+                    document.getElementById('loadContainerBtn').disabled = true;
+                    if (data.message) {
+                        console.info(data.message);
+                    }
+                } else {
+                    select.innerHTML = '<option value="">Select a container...</option>';
+                    availableContainers.forEach(container => {
+                        const option = document.createElement('option');
+                        option.value = JSON.stringify(container);
+                        option.textContent = `${container.account}/${container.name}`;
+                        select.appendChild(option);
+                    });
+                    select.disabled = false;
+                    document.getElementById('loadContainerBtn').disabled = false;
+                }
+            } catch (error) {
+                console.error('Error loading containers:', error);
+                const select = document.getElementById('containerSelect');
+                select.innerHTML = '<option value="">Failed to load containers</option>';
+                select.disabled = true;
+                document.getElementById('loadContainerBtn').disabled = true;
+            }
+        }
+
+        // Generate SAS token for selected container
+        async function generateSasToken(container, account) {
+            try {
+                const response = await fetch('/api/generate-sas', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        container: container,
+                        account: account
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `Failed to generate SAS: ${response.status}`);
+                }
+                
+                return await response.json();
+            } catch (error) {
+                throw new Error(`SAS generation failed: ${error.message}`);
+            }
+        }
+
+        // Load today's logs from selected container
+        async function loadFromContainer() {
+            const select = document.getElementById('containerSelect');
+            const selectedValue = select.value;
+            
+            if (!selectedValue) {
+                showMessage('Please select a container', 'error');
+                return;
+            }
+            
+            try {
+                const containerInfo = JSON.parse(selectedValue);
+                showMessage(`Generating SAS token for ${containerInfo.account}/${containerInfo.name}...`, 'loading');
+                
+                // Generate SAS token
+                const sasData = await generateSasToken(containerInfo.name, containerInfo.account);
+                
+                // Build URL for today's logs
+                const today = new Date();
+                const year = today.getFullYear();
+                const month = String(today.getMonth() + 1).padStart(2, '0');
+                const day = String(today.getDate()).padStart(2, '0');
+                
+                // Pattern for today's logs: y=YYYY/m=MM/d=DD/**/*.ndjson.gz
+                const todayPath = `y=${year}/m=${month}/d=${day}/**/*.ndjson.gz`;
+                const fullUrl = `${containerInfo.url}/${todayPath}?${sasData.sas_token}`;
+                
+                showMessage(`Loading logs for ${year}-${month}-${day}...`, 'loading');
+                console.log('Loading from URL:', fullUrl);
+                
+                // Use the existing wildcard URL loading function
+                await loadFromBlobUrl(fullUrl);
+                
+            } catch (error) {
+                showMessage(`Error loading from container: ${error.message}`, 'error');
+                console.error('Container load error:', error);
             }
         }
 
@@ -989,8 +1155,12 @@
             });
         });
 
+        // Load from container button
+        document.getElementById('loadContainerBtn').addEventListener('click', loadFromContainer);
+
         // Initialize on page load
         initDuckDB();
+        loadContainers();
     </script>
 </body>
 </html>

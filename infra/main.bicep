@@ -40,3 +40,4 @@ output AZURE_LOCATION string = location
 output AZURE_TENANT_ID string = tenant().tenantId
 output STATIC_WEB_APP_NAME string = staticWebApp.outputs.name
 output STATIC_WEB_APP_URL string = staticWebApp.outputs.url
+output STATIC_WEB_APP_PRINCIPAL_ID string = staticWebApp.outputs.principalId
