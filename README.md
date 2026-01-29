@@ -138,6 +138,8 @@ This will:
 2. Create an Azure resource group
 3. Deploy the Static Web App infrastructure
 4. Build and deploy the application
+
+**⚠️ Important:** To deploy the backend API (for container loading feature), ensure the GitHub Actions workflow has `api_location: "./src/api"` set. See [Backend Deployment Guide](./BACKEND_DEPLOYMENT.md) for verification steps.
 5. Output the deployed URL
 
 ### Manual Deployment Steps

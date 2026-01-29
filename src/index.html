@@ -501,8 +501,27 @@
         async function loadContainers() {
             try {
                 const response = await fetch('/api/containers');
+                
+                // Check if response is JSON before attempting to parse
+                // This handles the case where the API endpoint doesn't exist (404 with HTML)
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    // API not available or returning non-JSON (e.g., HTML fallback)
+                    console.info('Container API not available - response is not JSON');
+                    throw new Error('API endpoint not available');
+                }
+                
+                // For non-ok responses with JSON, try to parse to get error details
                 if (!response.ok) {
-                    throw new Error(`Failed to load containers: ${response.status}`);
+                    let errorMessage = `Failed to load containers: ${response.status}`;
+                    try {
+                        const errorData = await response.json();
+                        errorMessage = `Failed to load containers: ${response.status} - ${errorData.error || 'Unknown error'}`;
+                    } catch (jsonError) {
+                        // If JSON parsing fails, use the default error message
+                        console.warn('Could not parse error response as JSON:', jsonError);
+                    }
+                    throw new Error(errorMessage);
                 }
                 
                 const data = await response.json();
@@ -530,15 +549,14 @@
                     document.getElementById('loadContainerBtn').disabled = false;
                 }
             } catch (error) {
-                console.error('Error loading containers:', error);
+                console.info('Container loading disabled:', error.message);
                 const select = document.getElementById('containerSelect');
-                select.innerHTML = '<option value="">Failed to load containers</option>';
+                select.innerHTML = '<option value="">Container API not available</option>';
                 select.disabled = true;
                 document.getElementById('loadContainerBtn').disabled = true;
                 
-                // Show a brief notification to the user
-                showMessage('Could not load storage containers. Container selection is unavailable.', 'error');
-                setTimeout(() => hideMessage(), 5000);
+                // Don't show error message for missing API - it's optional
+                // The feature will simply be disabled
             }
         }
 
