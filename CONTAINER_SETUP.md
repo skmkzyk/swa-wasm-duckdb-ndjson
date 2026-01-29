@@ -247,6 +247,10 @@ python -m http.server 8000
 
 The API will use `DefaultAzureCredential` which falls back to your Azure CLI credentials.
 
+## Notes on Infrastructure
+
+The `infra/main.bicep` file is the source for infrastructure deployment. During deployment, Bicep automatically compiles this to an ARM template (`main.json`), which is not committed to version control as it's a generated build artifact. The Azure Developer CLI (`azd`) handles this compilation automatically.
+
 ## References
 
 - [Managed Identities for Azure Resources](https://learn.microsoft.com/entra/identity/managed-identities-azure-resources/)

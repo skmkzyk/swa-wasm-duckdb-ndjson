@@ -54,12 +54,13 @@ This project provides a web-based log viewer that can analyze and visualize NDJS
 .
 ├── azure.yaml                      # Azure Developer CLI configuration
 ├── infra/                          # Infrastructure as Code (Bicep)
-│   ├── main.bicep                 # Main infrastructure template
+│   ├── main.bicep                 # Main infrastructure template (source)
 │   ├── main.parameters.json       # Parameters for deployment
 │   ├── abbreviations.json         # Azure resource naming conventions
 │   └── core/
 │       └── host/
 │           └── staticwebapp.bicep # Static Web App resource definition
+│   # Note: main.json (compiled ARM template) is generated during deployment
 ├── src/                           # Application source code
 │   ├── index.html                 # Main frontend application
 │   └── api/                       # Python Azure Functions API
