@@ -501,6 +501,15 @@
         async function loadContainers() {
             try {
                 const response = await fetch('/api/containers');
+                
+                // Check if response is JSON before attempting to parse
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    // API not available or returning non-JSON (e.g., HTML fallback)
+                    console.info('Container API not available - response is not JSON');
+                    throw new Error('API endpoint not available');
+                }
+                
                 if (!response.ok) {
                     throw new Error(`Failed to load containers: ${response.status}`);
                 }
@@ -530,15 +539,14 @@
                     document.getElementById('loadContainerBtn').disabled = false;
                 }
             } catch (error) {
-                console.error('Error loading containers:', error);
+                console.info('Container loading disabled:', error.message);
                 const select = document.getElementById('containerSelect');
-                select.innerHTML = '<option value="">Failed to load containers</option>';
+                select.innerHTML = '<option value="">Container API not available</option>';
                 select.disabled = true;
                 document.getElementById('loadContainerBtn').disabled = true;
                 
-                // Show a brief notification to the user
-                showMessage('Could not load storage containers. Container selection is unavailable.', 'error');
-                setTimeout(() => hideMessage(), 5000);
+                // Don't show error message for missing API - it's optional
+                // The feature will simply be disabled
             }
         }
 
